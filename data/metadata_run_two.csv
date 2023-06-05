@@ -1,0 +1,7 @@
+sampleID	Treatment	Depth	Site	SOM	pH
+sample_11	W	topsoil	1	0.19886089	5.1
+sample_12	W	deepsoil	2	0.06205895	5
+sample_13	W	deepsoil	3	0.35863345	4.9
+sample_14	C	deepsoil	1	0.491357	5.7
+sample_15	C	deepsoil	2	0.5501132	5.9
+sample_16	C	topsoil	3	0.6042357	6

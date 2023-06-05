@@ -1,0 +1,653 @@
+---
+title: "Phyloseq - an introduction"
+date: "`r format(Sys.time(), '%A %d, %B')`"
+output:
+  html_document:
+    code_folding: show
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: readable
+    colortheme: "default"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE, eval=TRUE, results="hide", fig.show="show")
+```
+
+# An introduction to Phyloseq
+
+## Small intro
+
+[Phyloseq](https://joey711.github.io/phyloseq/) is an R package that was designed to simplify the management of ecology-related data structures and analyses.
+
+Data structures, in the context of ecology means dealing with:
+
+  - ASVs/OTUs table, i.e. counts: _numerics_;
+  - taxonomies: _characters_; 
+  - metadata: _data frame_.
+  
+In addition to managing these information, Phyloseq offers some specifically designed functions and some _wrapper_ functions that simplify performing common, downstream analyses.
+
+A _wapper_ function is a function that _calls_ another function but simplify the input that is necessary to make it work.
+
+Finally, some novel packages allowing further analyses, i.e. richness estimation or differential abundance analysis, take advantage of Phyloseq objects and simplify data analysis pipelines very much.
+
+## Constructing Phyloseq objects
+
+To construct a Phyloseq object one, two, or all these objects are needed, as mentioned [here](https://joey711.github.io/phyloseq/import-data.html):
+
+ - otu_table: can be any *numeric* matrix. it is necessary to specify whether the species are rows or columns;
+ - sample_data: can be any *data.frame*. The `rownames` must match the sample names in the `otu_table` if you plan to combine them as a phyloseq-object;
+ - tax_table: can be any *character* matrix. The `rownames` must match the OTU names (taxa_names) of the `otu_table` if you plan to combine it with a phyloseq-object.
+
+```{r}
+
+# load libraries
+library("ggplot2")
+library("phyloseq")
+library("vegan")
+
+# set paths to load the data
+path_to_exp <- "/mnt/cinqueg/gabriele/work/microbiology/intro_phyloseq/data/"
+
+# load tables with information that are needed
+asvs <- read.csv(paste0(path_to_exp, "asv_table.csv"), header=T, sep="\t")
+metadata <- read.csv(paste0(path_to_exp, "metadata.csv"), header=T, sep="\t")
+taxonomy <- read.csv(paste0(path_to_exp, "taxonomy.csv"), header=T, sep="\t")
+
+# set rownames for asvs/otus table
+rownames(asvs) <- asvs$asv
+# remove first column containing asvs names. why?
+asvs <- asvs[, -1]
+
+# set rownamames for taxonomy
+rownames(taxonomy) <- taxonomy$asv
+# remove first column containing asvs names. why?
+taxonomy <- taxonomy[, -1]
+
+# set rownames for metadata
+rownames(metadata) <- metadata$sampleID
+
+# create phyloseq object
+phylo_data <- phyloseq(otu_table(asvs, taxa_are_rows=T), sample_data(metadata), tax_table(as(taxonomy, "matrix")))
+
+# get metadata
+phylo_metadata <- sample_data(phylo_data)
+
+```
+
+## Managing Phyloseq objects
+
+One of the big advantages of Phyloseq is managing the data structures that are now stored into, and as, a `phyloseq` object. 
+
+Using phyloseq objects allows performing many things in an easy way (but it's true that there will always be another way). For example, let's merge two Phyloseq objects:
+
+```{r}
+# load tables with information that are needed
+asvs_run_two <- read.csv(paste0(path_to_exp, "asv_table_run_two.csv"), header=T, sep="\t")
+metadata_run_two <- read.csv(paste0(path_to_exp, "metadata_run_two.csv"), header=T, sep="\t")
+taxonomy_run_two <- read.csv(paste0(path_to_exp, "taxonomy_run_two.csv"), header=T, sep="\t")
+
+# set rownames for asvs/otus table
+rownames(asvs_run_two) <- asvs_run_two$asv
+# remove first column containing asvs names. it is now useless
+asvs_run_two <- asvs_run_two[, -1]
+
+# set rownamames for taxonomy
+rownames(taxonomy_run_two) <- taxonomy_run_two$asv
+taxonomy_run_two <- taxonomy_run_two[, -1]
+
+# set rownames for metadata
+rownames(metadata_run_two) <- metadata_run_two$sampleID
+
+# create phyloseq object
+phylo_data_run_two <- phyloseq(otu_table(asvs_run_two, taxa_are_rows=T), sample_data(metadata_run_two), tax_table(as(taxonomy_run_two, "matrix")))
+
+# finally, once the second run was loaded, it is possible to merge
+# the two runs into a single phyloseq object
+phylo_merged <- merge_phyloseq(phylo_data, phylo_data_run_two)
+```
+
+Of course, it is also possible to work on each component of a Phyloseq object, alone. For instance, set some variables as factors in the metadata data frame:
+
+```{r}
+# what is the current data type for treatment?
+class(sample_data(phylo_merged)$Treatment)
+
+# however, when performing statistics it is better to deal
+# with factors, instead.
+# to do it there is a wrong way which starts by extracting the
+# sample_data out from the phyloseq object
+wrong_way <- sample_data(phylo_merged)
+# then transforming it one variable into factor
+wrong_way$Treatment <- factor(wrong_way$Treatment, levels=unique(wrong_way$Treatment))
+
+# problem is that the sample_data inside the phyloseq objects
+# are still characters
+class(sample_data(phylo_merged)$Treatment)
+
+# so, to do it properly it is necessary to work directly on the
+# sample_data table INSIDE the phyloseq object
+sample_data(phylo_merged)$Treatment <- factor(sample_data(phylo_merged)$Treatment, levels=unique(sample_data(phylo_merged)$Treatment))
+sample_data(phylo_merged)$Depth <- factor(sample_data(phylo_merged)$Depth, levels=unique(sample_data(phylo_merged)$Depth))
+sample_data(phylo_merged)$Site <- factor(sample_data(phylo_merged)$Site, levels=unique(sample_data(phylo_merged)$Site))
+
+# now the treatment is finally a factor:
+class(sample_data(phylo_merged)$Treatment)
+
+# meaning it is now a good idea to get the metadata
+# as a standalone variable for further processing
+phylo_merged_meta <- sample_data(phylo_merged)
+
+# and yes, treatment is still a factor:
+class(phylo_merged_meta$Treatment)
+
+```
+
+In addition, it is also possible to merge samples, using some of the variables stored as metadata. For example, say it is needed to merge the samples together, by treatment:
+
+```{r}
+# perform the merge by treatment
+merged_treatments <- merge_samples(phylo_merged, "Treatment")
+
+# however, results may be a bit weird
+sample_data(merged_treatments)
+```
+
+Of course, the results will be a bit weird for some of those variables that can not be merged, such as Depth, for example. The main issue with this function is that all variables that are not _merged_, an average value will be computed and this average value may be nonsense.
+
+## Subset Phyloseq objects
+
+To subset the data, i.e. get only some samples from a specific depth or treatment, remove some unwanted taxa, or both, there are some functions available.
+
+They are called using a different version of `prune`. The reasoning of these functions, to me, it a bit counter-intuitive but let's see:
+
+```{r}
+
+# define a depth which is of interest for further processing
+a_depth <- "deepsoil"
+
+# subset by depth. in phyloseq this means that samples 
+# that do not belong to a specific depth will be removed
+phylo_depth <- prune_samples(as.character(phylo_metadata$sampleID[which(phylo_metadata$Depth == a_depth)]), phylo_data)
+
+# also, it may make sense to remove those ASVs/OTUs
+# which are always zero for the subset under consideration
+phylo_depth <- prune_taxa(taxa_sums(phylo_depth) > 0, phylo_depth)
+
+# get metadata for the reduced set of samples and taxa
+phylo_depth_meta <- sample_data(phylo_depth)
+```
+
+In addition to these pruning functions, there is also another interesting procedure that allows to _agglomerate_ taxa together. The function is called `tax_glom()`:
+
+```{r}
+
+# define a taxonomy level at which to aggregate
+taxa_level <- "Order"
+
+# aggregate taxa at a specific taxonomy level
+phylo_aggregated <- tax_glom(phylo_merged, taxrank=taxa_level)
+
+# get metadata for phylo_aggregated
+phylo_aggregated_meta <- sample_data(phylo_aggregated)
+```
+
+## Base Phyloseq plotting
+
+Phyloseq also offers some plotting functions:
+
+```{r}
+# for instance let's plot a quite ugly barplot
+plot_bar(phylo_merged, fill="Order")
+
+# it is always possible to to better, of course, but not much
+# split the plot by Treatment
+plot_bar(phylo_merged, "Order", fill="Genus", facet_grid=~Treatment)
+# split the plot by Depth
+plot_bar(phylo_merged, "Genus", fill="Order", facet_grid=~Depth)
+
+# or a quite not-intuitive heatmap (assuming you have thousands
+# of ASVs/OTUS, as is almost always the case)
+plot_heatmap(phylo_data)
+
+# a phylogenetic tree is also available
+# plot_tree(phylo_merged)
+
+# plot alpha diversity
+plot_richness(phylo_merged, measures=c("Simpson", "Shannon"))
+
+# add colours
+plot_richness(phylo_merged, x="Treatment", color="Depth", measures=c("Chao1", "Shannon"))
+
+# invert colours and x axis
+plot_richness(phylo_merged, x="Depth", color="Treatment", measures=c("Chao1", "Shannon"))
+
+```
+
+These plots are based on `ggplot2` and it is always possible to add further make-up:
+
+```{r}
+
+# invert colours and x axis and add some make-up to the plot
+plot_richness(phylo_merged, x="Depth", color="Treatment", measures=c("Chao1", "Shannon")) +
+  xlab("") +
+  ylab("Alpha diversity") +
+  theme_bw() +
+	theme(text=element_text(size=25, face="bold"), legend.position="right", strip.text=element_text(size=15), axis.text.x=element_text(angle=30, hjust=1))
+
+```
+
+## Basic ordinations
+
+Phyloseq offers the possibility to perform many kinds of ordination using what is called a _wrapper_ function, i.e. `ordinate()`.
+
+Ordinations can be perfomed using NMDS or Principal Component Analysis (PCA) or Principal Coordinate Analysis (PCoA) or Redundancy Analysis (RDA) and more...
+
+First, let's have a look at how the `ordinate()` function works:
+
+```{r}
+
+help(ordinate)
+
+```
+
+Then, let's try to run a simple ordination using, for example, PCoA:
+
+```{r}
+
+# run a simple ordination
+simple_ordination <- ordinate(phylo_merged, "PCoA", "euclidean")
+
+# plot the results
+plot_ordination(phylo_merged, simple_ordination)
+
+# let's add some colour
+plot_ordination(phylo_merged, simple_ordination, type="taxa", color="Order", title="Taxa")
+
+# plot samples only
+plot_ordination(phylo_merged, simple_ordination, type="samples", color="Treatment", title="Samples")
+
+# plot everything at once
+plot_ordination(phylo_merged, simple_ordination, type="biplot", color="Order", shape="Treatment", title="A simple biplot")
+
+```
+
+Phyloseq offers the possibility to compute distance matrices and to use them when performing ordination, separately:
+
+```{r}
+# compute distance matrix
+a_dist_mat <- distance(phylo_merged, method="euclidean")
+
+# compute ordination using the distance matrix
+dist_ordination <- ordinate(phylo_merged, "PCoA", distance=a_dist_mat)
+```
+
+Of course, for plotting it is always possible to use `ggplot2`:
+
+```{r}
+# get first two vectors from the ordination
+data_to_plot <- cbind.data.frame(v_one = simple_ordination$vectors[, 1], v_two = simple_ordination$vectors[, 2])
+
+# get further data
+treatment <- vector()
+depth <- vector()
+
+# for each sample in data
+for (ind in c(1:nrow(data_to_plot))) {
+	treatment <- append(treatment, as.character(phylo_merged_meta$Treatment[which(phylo_merged_meta$sampleID==rownames(data_to_plot)[ind])]))
+	depth <- append(depth, as.character(phylo_merged_meta$Depth[which(phylo_merged_meta$sampleID==rownames(data_to_plot)[ind])]))
+	}
+# put all together
+data_to_plot <- cbind.data.frame(data_to_plot, treatment, depth)
+#set levels
+data_to_plot$treatment <- factor(data_to_plot$treatment, levels=c("C", "W"))
+data_to_plot$depth <- factor(data_to_plot$depth, levels=c("topsoil", "deepsoil"))
+
+# define shapes for depth both shapes must be in the same order
+depthshape <- c(21, 24)
+names(depthshape) <- c("topsoil", "deepsoil")
+
+# plot without facets
+plot_simple <- ggplot(data_to_plot, aes(x=v_one, y=v_two, fill=treatment, shape=depth)) +
+	geom_point(size=6) +
+	scale_shape_manual(values=depthshape) +
+	ggtitle("A simple ordination analysis") +
+	theme_bw() +
+	theme(text=element_text(size=15, face="bold"), legend.position="right") +
+	guides(fill=guide_legend(override.aes=list(shape=21)))
+
+plot(plot_simple)
+
+```
+
+## Constrained ordinations
+
+In addition to simple ordinations, Phyloseq offers the possibility to perform constrained ordination, i.e. partial RDA, for example. To perform this kind of analysis, it is necessary to have some metadata and a model:
+
+```{r}
+
+# define the model
+formula_rda <- "phylo_merged~Treatment+Depth+Condition(Site)"
+
+# compute ordination using the model
+partial_rda <- ordinate(phylo_merged, "RDA", formula=as.formula(formula_rda))
+
+# in addition, since the ordinate function of phyloseq is returning
+# a vegan object, it is always possible to use a function from vegan
+# to add some environmental variables
+
+# compute fitting using vegan
+var_fitting_enviro <- envfit(partial_rda, sample_data(phylo_merged)[, c("SOM", "pH")], perm=1000, na.rm=TRUE)
+
+# then, it will be nice to plot the ordination
+
+# load the function files
+source("side_functions.R")
+
+# get the plot ready
+scaling_two <- function() {plot_ordination(data=partial_rda, metadata=phylo_merged_meta, var_fitting=var_fitting_enviro, scale_param=2, maintitle=paste0("Partial RDA with scaling 2"))}
+
+dev.new(width=40, height=30)
+
+# plot :-)
+scaling_two()
+```
+
+## Further explorations
+
+In addition to all the analyses, there are some packages that takes advantage of the Phyloseq data structure. These packages can be used to estimate richness and $\beta$-diversity:
+ - [Breakaway](https://adw96.github.io/breakaway/index.html);
+ - [DivNet](https://github.com/adw96/DivNet);
+ 
+or to perform differential abundance analysis:
+  - [ANCOM-BC](https://github.com/FrederickHuangLin/ANCOMBC).
+
+In contrast, to perform PERMANOVA tests using the `vegan` function `adonis2()`, it is necessary to disassemble the Phyloseq object and use some of its parts.
+
+```{r}
+############################ LOAD LIBRARIES ############################
+
+# load libraries
+library("plyr")
+library("dplyr")
+library("reshape2")
+library("ggplot2")
+library("phyloseq")
+library("ANCOMBC")
+library("breakaway")
+library("DivNet")
+
+############################ LOAD DATA ############################
+
+print("LOADING DATA")
+
+# set path according to the experiment
+path_to_exp <- "/mnt/cinqueg/gabriele/work/microbiology/intro_phyloseq/data/"
+# set paths
+save_img <- paste0(path_to_exp, "figures/")
+save_taxa_figs <- paste0(save_img, "taxaFigs/")
+
+# check if dirs exist
+ifelse(!dir.exists(save_img), dir.create(save_img, recursive=TRUE), "dir exists!")
+ifelse(dir.exists(save_taxa_figs), "dir exists!", dir.create(save_taxa_figs, recursive=TRUE))
+
+# load asv table
+asvs <- read.csv(paste0(path_to_exp, "asv_table.csv"), header=T, sep="\t")
+metadata <- read.csv(paste0(path_to_exp, "metadata.csv"), header=T, sep="\t")
+taxonomy <- read.csv(paste0(path_to_exp, "taxonomy.csv"), header=T, sep="\t")
+
+############################ CREATE PHYLOSEQ OBJECTS ############################
+
+# set rownames for asvs table
+rownames(asvs) <- asvs$asv
+# remove first column containing asvs names. it is now useless
+asvs <- asvs[, -1]
+
+# set rownamames for taxonomy
+rownames(taxonomy) <- taxonomy$asv
+taxonomy <- taxonomy[, -1]
+
+# set rownames for metadata
+rownames(metadata) <- metadata$sampleID
+
+# load non-transformed object
+phylo_data <- phyloseq(otu_table(asvs, taxa_are_rows=T), sample_data(metadata), tax_table(as(taxonomy, "matrix")))
+
+# load metadata table
+phylo_metadata <- sample_data(phylo_data)
+
+############################ SELECT PARAMETERS FOR PLOTTING ############################
+
+# loop through taxa levels, to aggregate appropriately
+taxa_level <- "Order"
+# get best n taxa for the selected taxa_level
+n_best <- 3
+
+############################ AGGREGATE ############################
+
+# aggregate taxa at a specific taxonomy level
+phylo_aggregated <- tax_glom(phylo_data, taxrank=taxa_level)
+
+# get metadata for phylo_aggregated
+phylo_aggregated_meta <- sample_data(phylo_aggregated)
+
+############################ GET INFO NEEDED FOR THE PLOTS ############################
+
+# define empty variable that will store all results for the final plot
+control_and_warming_tmp <- list()
+unidenti_taxa <- vector()
+best_taxa <- vector()
+other_taxa <- vector()
+
+# storage for plots
+all_plots <- list()
+
+# loop through depths
+for (a_depth in unique(phylo_aggregated_meta$Depth)) {
+
+	print(paste0("Analysing ", a_depth))
+
+	# subset by depth. remove samples that do not belong to a specific depth
+	phylo_depth <- prune_samples(as.character(phylo_aggregated_meta$sampleID[which(phylo_aggregated_meta$Depth == a_depth)]), phylo_aggregated)
+
+	# remove ASVs which are always zero for the subset under consideration
+	phylo_depth <- prune_taxa(taxa_sums(phylo_depth) > 0, phylo_depth)
+	
+	# get metadata
+	phylo_depth_meta <- sample_data(phylo_depth)
+
+	# compute sums to obtain the contribution of all sampling sites
+	# to a specific taxa, then order from most abundant to less abundant
+	depth_sums <- sort(rowSums(otu_table(phylo_depth)), decreasing=T)
+
+	# get ordered taxa names, using factors
+	taxa_names <- tax_table(phylo_depth)[names(depth_sums), taxa_level]
+	
+	# find unidenti, best scoring taxa, and other taxa
+	unidenti <- grep("_Unidentified", taxa_names)
+	if (length(unidenti)>0){
+		# get taxa_names
+		unidenti_taxa <- taxa_names[unidenti]
+		# remove unidentified taxa
+		taxa_names <- taxa_names[-unidenti]
+	}	
+	# get best taxa from those that are identified
+	best_taxa <- taxa_names[1:n_best]
+	# get all other taxa, from those that are identified
+	other_taxa <- taxa_names[(n_best+1):length(taxa_names)]
+	
+	# define some empty lists to store all results
+	merged_tabs <- vector()
+	a_treat_tab <- vector()
+	
+	# loop through treatments to compute abundances at treatment level
+	for (a_treat in unique(phylo_depth_meta$Treatment)) {
+
+		print(paste0("Analysing ", a_treat))
+	
+		# subset by depth
+		phylo_treat <- prune_samples(as.character(phylo_depth_meta$sampleID[which(phylo_depth_meta$Treatment == a_treat)]), phylo_depth)
+
+		# remove ASVs which are always zero for the subset under consideration
+		phylo_treat <- prune_taxa(taxa_sums(phylo_treat) > 0, phylo_treat)
+
+		for (taxa_type in c("best_taxa", "other_taxa", "unidenti_taxa")) {
+		
+			print(paste0("Analysing ", taxa_type))
+			
+			taxa_names_sub <- ""
+				
+			if (taxa_type=="best_taxa") {
+				# get best taxa
+				treat_sums <- rowSums(otu_table(phylo_treat)[which(tax_table(phylo_treat)[, taxa_level] %in% get(taxa_type)), ])
+				# get taxa names
+				taxa_names_sub <- tax_table(phylo_treat)[names(treat_sums), taxa_level]
+			} else {
+				
+				# compute sums to obtain the contribution of all sampling sites
+				# to a specific taxa, then order from most abundant to less abundant
+				treat_sums <- sum(rowSums(otu_table(phylo_treat)[which(tax_table(phylo_treat)[, taxa_level] %in% get(taxa_type)), ]))
+				# get taxa names
+				if (taxa_type=="other_taxa") {
+					taxa_names_sub <- "Other"
+				} else {
+					taxa_names_sub <- "Unidentified"
+				}
+			}
+
+			# put columns together for phylo_depth samples and compute
+			# the percentage of contribution each taxa is providing to
+			# the total, to finally compare the taxa. by doing so, we
+			# make sure the total will always sum up to 1, i.e. 100%
+			a_treat_tab <- cbind.data.frame(T_level=taxa_names_sub, Treatment=a_treat, Depth=a_depth, Abundance=treat_sums, Relative=0)
+			rownames(a_treat_tab) <- NULL
+			colnames(a_treat_tab) <- c("T_level", "Treatment", "Depth", "Abundance", "Relative")
+			merged_tabs <- rbind.data.frame(merged_tabs, a_treat_tab)
+		}
+		# add relative abundance once one treatment is all computed
+		merged_tabs[which(merged_tabs$Treatment==a_treat), ]$Relative <- merged_tabs[which(merged_tabs$Treatment==a_treat), ]$Abundance/sum(merged_tabs[which(merged_tabs$Treatment==a_treat), ]$Abundance)
+	}
+	
+	############################ SET FACTOR LEVELS ############################
+	
+	print("Organising for plots")
+
+	# set levels in order
+	last_two <- as.character(c(merged_tabs$T_level[!grepl("Other|Unidenti", merged_tabs$T_level)], merged_tabs$T_level[grepl("Other|Unidenti", merged_tabs$T_level)]))
+	merged_tabs$T_level <- factor(merged_tabs$T_level, levels=unique(last_two))
+
+	# re-set labels
+	merged_tabs$Treatment <- ifelse(merged_tabs$Treatment=="W", "Warming", "Control")
+
+	# merge depths together
+	control_and_warming_tmp[[a_depth]] <- merged_tabs
+	
+	############################ PLOT WITH FACETS ############################
+	
+	print("plotting with facets")
+
+	# get the merged_tabs plot ready
+	all_plots[[a_depth]] <- merged_tabs %>%
+		count(T_level, Treatment, Depth, wt=Relative, name="Relative") %>%
+		ggplot() +
+		geom_bar(aes(fill=T_level, y=Relative, x=Treatment), stat="identity", color="black") +
+		theme_bw() +
+		theme(text=element_text(size=25, face="bold"), legend.position="none", strip.text=element_text(size=15), legend.key.height=unit(0.7,'cm'), axis.text.x=element_text(angle=50, hjust=1)) +
+		guides(fill=guide_legend(ncol=1)) +
+		xlab("") +
+		ylab("") +
+		facet_wrap(~T_level) +
+		ggtitle(paste0("Taxa composition for ", a_depth, " at ", taxa_level, " level"))
+}
+
+############################ SET FACTORS LEVELS ############################
+
+control_and_warming <- do.call(rbind.data.frame, control_and_warming_tmp)
+
+# set levels for T_level
+last_two <- as.character(c(control_and_warming$T_level[!grepl("^Other$|^Unidenti$", control_and_warming$T_level)], control_and_warming$T_level[grepl("^Other$|^Unidenti$", control_and_warming$T_level)]))
+control_and_warming$T_level <- factor(control_and_warming$T_level, levels=unique(last_two))
+
+# set levels for Depth
+control_and_warming$Depth <- factor(control_and_warming$Depth, levels=unique(control_and_warming$Depth))
+
+############################ PLOT STACKED ############################
+
+print("plot stacked")
+
+# get the plot ready
+all_plots[["ribon"]] <- control_and_warming %>%
+	count(T_level, Treatment, Depth, wt=Relative, name="Relative") %>%
+	ggplot() +
+	geom_bar(aes(fill=T_level, y=Relative, x=Treatment), position="fill", stat="identity", color="black") +
+	theme_bw() +
+	theme(text=element_text(size=25, face="bold"), legend.position="right", legend.text=element_text(size=15), legend.key.height=unit(0.7,'cm'), axis.text.x=element_text(angle=50, hjust=1)) +
+	guides(fill=guide_legend(ncol=1)) +
+	xlab("") +
+	ylab("") +
+	ylim(0, 1) +
+	facet_wrap(~Depth) +
+	labs(fill=taxa_level)
+
+```
+
+WORKING ON THIS :-)
+
+```{r}
+
+############################ PERMANOVA TEST WITH ADONIS2 ############################
+
+# as factors
+sample_data(phylo_merged)$Treatment <- factor(sample_data(phylo_merged)$Treatment, levels=unique(sample_data(phylo_merged)$Treatment))
+
+# set levels to make Controls the reference
+sample_data(phylo_merged)$Treatment <- relevel(sample_data(phylo_merged)$Treatment, ref="C")
+
+# get taxa table and transpose it in to obtain a table which is
+# sample X species as described in the Adonis documentation
+# https://rdrr.io/rforge/vegan/man/adonis.html
+transposed_taxa <- t(otu_table(phylo_merged))
+
+# get metadata
+adonis_meta <- as.data.frame(as.matrix(sample_data(phylo_merged)))
+
+# make sure the variables in the formula are factors since
+# statistical models require it, to work properly
+adonis_meta$Treatment <- factor(adonis_meta$Treatment, levels=unique(adonis_meta$Treatment))
+adonis_meta$Depth <- factor(adonis_meta$Depth, levels=unique(adonis_meta$Depth))
+adonis_meta$Site <- factor(adonis_meta$Site, levels=unique(adonis_meta$Site))
+
+# set seed
+set.seed(131)
+
+# using adonis2 to perform the analysis
+
+# set number of permutations
+permuts <- how(nperm = 999)
+
+# set blocking variable, i.e. the sampling sites
+adonis_meta$Site <- as.factor(adonis_meta$Site)
+	
+# run adonis2 on bray-curtis distance using CollectionSite
+# as blocking factor
+# BE CAREFUL HERE, I AM NOT SURE ABOUT THIS WORKING AS I AM EXPECTING
+adonis_test <- adonis2(transposed_taxa~Treatment*Depth, data=adonis_meta, permutations=permuts, strata=adonis_meta$CollectionSite, method="bray", by="terms")
+
+############################ DIFFERENTIAL ABUNDANCE ANALYSIS ############################
+
+# set formula to conside Site as random effect
+fixedf <- "Treatment * Depth"
+randf <- "Site"
+
+# set seed
+set.seed(131)
+
+# run ancombc2 using the phylo_merged
+ancom_output <- ancombc2(data=phylo_merged, assay_name="counts", tax_level="Order", fix_formula=fixedf, rand_formula=randf, p_adj_method="fdr", n_cl = 8, verbose=T)
+
+############################ ESTIMATING RICHNESS AND BETA DIVERSITY ############################
+
+# work in progress
+```
