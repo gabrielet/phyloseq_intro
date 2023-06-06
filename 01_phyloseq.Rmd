@@ -651,7 +651,7 @@ all_plots[["ribon"]] <- control_and_warming %>%
 
 ```
 
-WORKING ON THIS :-)
+## Work in progress
 
 ```{r}
 
@@ -707,6 +707,6 @@ ancom_output <- ancombc2(data=phylo_merged, assay_name="counts", tax_level="Orde
 
 ############################ ESTIMATING RICHNESS AND BETA DIVERSITY ############################
 
-# work in progress, here
+# nothing here, yet
 
 ```
