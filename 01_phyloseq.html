@@ -1584,7 +1584,7 @@ border-radius: 0px;
 
 
 <h1 class="title toc-ignore">Phyloseq - an introduction</h1>
-<h4 class="date">Monday 05, June</h4>
+<h4 class="date">Tuesday 06, June</h4>
 
 </div>
 
@@ -1686,7 +1686,12 @@ taxonomy_run_two &lt;- taxonomy_run_two[, -1]
 rownames(metadata_run_two) &lt;- metadata_run_two$sampleID
 
 # create phyloseq object
-phylo_data_run_two &lt;- phyloseq(otu_table(asvs_run_two, taxa_are_rows=T), sample_data(metadata_run_two), tax_table(as(taxonomy_run_two, &quot;matrix&quot;)))
+otu_for_phylo &lt;- otu_table(asvs_run_two, taxa_are_rows=T)
+meta_for_phylo &lt;- sample_data(metadata_run_two)
+taxa_for_phylo &lt;- tax_table(as(taxonomy_run_two, &quot;matrix&quot;))
+
+# put all the pieces together
+phylo_data_run_two &lt;- phyloseq(otu_for_phylo, taxa_for_phylo, meta_for_phylo)
 
 # finally, once the second run was loaded, it is possible to merge
 # the two runs into a single phyloseq object
@@ -1737,6 +1742,39 @@ variables that can not be merged, such as Depth, for example. The main
 issue with this function is that all variables that are not
 <em>merged</em>, an average value will be computed and this average
 value may be nonsense.</p>
+</div>
+<div id="transform-counts-and-export-phyloseq-objects" class="section level2">
+<h2>Transform counts and export Phyloseq objects</h2>
+<p>Transforming counts is very easy with Phyloseq and there are two main
+transformation that are frequently used in ecology: Hellinger and
+Centered Log Ratio (CLR).</p>
+<pre class="r"><code># transform counts using hellinger transformation
+hellinger_phylo_merged &lt;- transform_sample_counts(phylo_merged, function(x) sqrt(x / sum(x)))
+
+# 3. apply robust centered log ratio transformation using vegan&#39;s decostand:
+# All methods have a default margin. MARGIN=1 means rows (sites in 
+# a normal data set) and MARGIN=2 means columns (species in a
+# normal data set).
+# vegan assumes that rows are samples while cols are taxa, i.e. ASVs
+# hence, we need to transpose our ASV table or set MARGIN = &quot;2&quot;
+centered_counts &lt;- decostand(as(otu_table(phylo_merged), &quot;matrix&quot;), method=&quot;rclr&quot;, MARGIN=&quot;2&quot;)
+
+# transpose back to use the table with phyloseq
+centered_counts_phylo &lt;- otu_table(centered_counts, taxa_are_rows=TRUE)
+
+# build phyloseq object with CLRed counts
+centered_phylo_data &lt;- phyloseq(centered_counts_phylo, sample_data(phylo_merged), tax_table(phylo_merged))</code></pre>
+<p>Once Phyloseq objects are build and ready to be used for further
+analyses, they can be exported (and later imported) as <code>Rds</code>
+files:</p>
+<pre class="r"><code># export non-transformed object
+saveRDS(phylo_merged, paste0(path_to_exp, &quot;phylo_merged.Rds&quot;))
+
+# export CLR transformed object
+saveRDS(centered_phylo_data, paste0(path_to_exp, &quot;centered_phylo_data.Rds&quot;))
+
+# import CLR transformed
+just_loaded_clr &lt;- readRDS(paste0(path_to_exp, &quot;centered_phylo_data.Rds&quot;))</code></pre>
 </div>
 <div id="subset-phyloseq-objects" class="section level2">
 <h2>Subset Phyloseq objects</h2>
@@ -1918,8 +1956,15 @@ scaling_two()</code></pre>
 <h2>Further explorations</h2>
 <p>In addition to all the analyses, there are some packages that takes
 advantage of the Phyloseq data structure. These packages can be used to
-estimate richness and <span class="math inline">\(\beta\)</span>-diversity: - <a href="https://adw96.github.io/breakaway/index.html">Breakaway</a>; - <a href="https://github.com/adw96/DivNet">DivNet</a>;</p>
-<p>or to perform differential abundance analysis: - <a href="https://github.com/FrederickHuangLin/ANCOMBC">ANCOM-BC</a>.</p>
+estimate richness and <span class="math inline">\(\beta\)</span>-diversity:</p>
+<ul>
+<li><a href="https://adw96.github.io/breakaway/index.html">Breakaway</a>;</li>
+<li><a href="https://github.com/adw96/DivNet">DivNet</a>;</li>
+</ul>
+<p>or to perform differential abundance analysis:</p>
+<ul>
+<li><a href="https://github.com/FrederickHuangLin/ANCOMBC">ANCOM-BC</a>.</li>
+</ul>
 <p>In contrast, to perform PERMANOVA tests using the <code>vegan</code>
 function <code>adonis2()</code>, it is necessary to disassemble the
 Phyloseq object and use some of its parts.</p>
@@ -1944,8 +1989,6 @@ library(&quot;dplyr&quot;)</code></pre>
 library(&quot;ggplot2&quot;)
 library(&quot;phyloseq&quot;)
 library(&quot;ANCOMBC&quot;)
-library(&quot;breakaway&quot;)
-library(&quot;DivNet&quot;)
 
 ############################ LOAD DATA ############################
 
@@ -1955,12 +1998,10 @@ print(&quot;LOADING DATA&quot;)
 path_to_exp &lt;- &quot;/mnt/cinqueg/gabriele/work/microbiology/intro_phyloseq/data/&quot;
 # set paths
 save_img &lt;- paste0(path_to_exp, &quot;figures/&quot;)
-save_obj &lt;- paste0(path_to_exp, &quot;rdsObjs/&quot;)
 save_taxa_figs &lt;- paste0(save_img, &quot;taxaFigs/&quot;)
 
 # check if dirs exist
 ifelse(!dir.exists(save_img), dir.create(save_img, recursive=TRUE), &quot;dir exists!&quot;)
-ifelse(!dir.exists(save_obj), dir.create(save_obj, recursive=TRUE), &quot;dir exists!&quot;)
 ifelse(dir.exists(save_taxa_figs), &quot;dir exists!&quot;, dir.create(save_taxa_figs, recursive=TRUE))
 
 # load asv table
@@ -2218,7 +2259,7 @@ ancom_output &lt;- ancombc2(data=phylo_merged, assay_name=&quot;counts&quot;, ta
 <pre><code>## The sensitivity analysis for the pseudo-count addition ...</code></pre>
 <pre class="r"><code>############################ ESTIMATING RICHNESS AND BETA DIVERSITY ############################
 
-# work in progress</code></pre>
+# work in progress, here</code></pre>
 </div>
 </div>
 

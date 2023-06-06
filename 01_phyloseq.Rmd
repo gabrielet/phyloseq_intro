@@ -84,6 +84,7 @@ One of the big advantages of Phyloseq is managing the data structures that are n
 Using phyloseq objects allows performing many things in an easy way (but it's true that there will always be another way). For example, let's merge two Phyloseq objects:
 
 ```{r}
+
 # load tables with information that are needed
 asvs_run_two <- read.csv(paste0(path_to_exp, "asv_table_run_two.csv"), header=T, sep="\t")
 metadata_run_two <- read.csv(paste0(path_to_exp, "metadata_run_two.csv"), header=T, sep="\t")
@@ -102,16 +103,23 @@ taxonomy_run_two <- taxonomy_run_two[, -1]
 rownames(metadata_run_two) <- metadata_run_two$sampleID
 
 # create phyloseq object
-phylo_data_run_two <- phyloseq(otu_table(asvs_run_two, taxa_are_rows=T), sample_data(metadata_run_two), tax_table(as(taxonomy_run_two, "matrix")))
+otu_for_phylo <- otu_table(asvs_run_two, taxa_are_rows=T)
+meta_for_phylo <- sample_data(metadata_run_two)
+taxa_for_phylo <- tax_table(as(taxonomy_run_two, "matrix"))
+
+# put all the pieces together
+phylo_data_run_two <- phyloseq(otu_for_phylo, taxa_for_phylo, meta_for_phylo)
 
 # finally, once the second run was loaded, it is possible to merge
 # the two runs into a single phyloseq object
 phylo_merged <- merge_phyloseq(phylo_data, phylo_data_run_two)
+
 ```
 
 Of course, it is also possible to work on each component of a Phyloseq object, alone. For instance, set some variables as factors in the metadata data frame:
 
 ```{r}
+
 # what is the current data type for treatment?
 class(sample_data(phylo_merged)$Treatment)
 
@@ -148,14 +156,56 @@ class(phylo_merged_meta$Treatment)
 In addition, it is also possible to merge samples, using some of the variables stored as metadata. For example, say it is needed to merge the samples together, by treatment:
 
 ```{r}
+
 # perform the merge by treatment
 merged_treatments <- merge_samples(phylo_merged, "Treatment")
 
 # however, results may be a bit weird
 sample_data(merged_treatments)
+
 ```
 
 Of course, the results will be a bit weird for some of those variables that can not be merged, such as Depth, for example. The main issue with this function is that all variables that are not _merged_, an average value will be computed and this average value may be nonsense.
+
+## Transform counts and export Phyloseq objects
+
+Transforming counts is very easy with Phyloseq and there are two main transformation that are frequently used in ecology: Hellinger and Centered Log Ratio (CLR).
+
+```{r}
+
+# transform counts using hellinger transformation
+hellinger_phylo_merged <- transform_sample_counts(phylo_merged, function(x) sqrt(x / sum(x)))
+
+# 3. apply robust centered log ratio transformation using vegan's decostand:
+# All methods have a default margin. MARGIN=1 means rows (sites in 
+# a normal data set) and MARGIN=2 means columns (species in a
+# normal data set).
+# vegan assumes that rows are samples while cols are taxa, i.e. ASVs
+# hence, we need to transpose our ASV table or set MARGIN = "2"
+centered_counts <- decostand(as(otu_table(phylo_merged), "matrix"), method="rclr", MARGIN="2")
+
+# transpose back to use the table with phyloseq
+centered_counts_phylo <- otu_table(centered_counts, taxa_are_rows=TRUE)
+
+# build phyloseq object with CLRed counts
+centered_phylo_data <- phyloseq(centered_counts_phylo, sample_data(phylo_merged), tax_table(phylo_merged))
+
+```
+
+Once Phyloseq objects are build and ready to be used for further analyses, they can be exported (and later imported) as `Rds` files:
+
+```{r}
+
+# export non-transformed object
+saveRDS(phylo_merged, paste0(path_to_exp, "phylo_merged.Rds"))
+
+# export CLR transformed object
+saveRDS(centered_phylo_data, paste0(path_to_exp, "centered_phylo_data.Rds"))
+
+# import CLR transformed
+just_loaded_clr <- readRDS(paste0(path_to_exp, "centered_phylo_data.Rds"))
+
+```
 
 ## Subset Phyloseq objects
 
@@ -178,6 +228,7 @@ phylo_depth <- prune_taxa(taxa_sums(phylo_depth) > 0, phylo_depth)
 
 # get metadata for the reduced set of samples and taxa
 phylo_depth_meta <- sample_data(phylo_depth)
+
 ```
 
 In addition to these pruning functions, there is also another interesting procedure that allows to _agglomerate_ taxa together. The function is called `tax_glom()`:
@@ -192,6 +243,7 @@ phylo_aggregated <- tax_glom(phylo_merged, taxrank=taxa_level)
 
 # get metadata for phylo_aggregated
 phylo_aggregated_meta <- sample_data(phylo_aggregated)
+
 ```
 
 ## Base Phyloseq plotting
@@ -199,6 +251,7 @@ phylo_aggregated_meta <- sample_data(phylo_aggregated)
 Phyloseq also offers some plotting functions:
 
 ```{r}
+
 # for instance let's plot a quite ugly barplot
 plot_bar(phylo_merged, fill="Order")
 
@@ -277,16 +330,19 @@ plot_ordination(phylo_merged, simple_ordination, type="biplot", color="Order", s
 Phyloseq offers the possibility to compute distance matrices and to use them when performing ordination, separately:
 
 ```{r}
+
 # compute distance matrix
 a_dist_mat <- distance(phylo_merged, method="euclidean")
 
 # compute ordination using the distance matrix
 dist_ordination <- ordinate(phylo_merged, "PCoA", distance=a_dist_mat)
+
 ```
 
 Of course, for plotting it is always possible to use `ggplot2`:
 
 ```{r}
+
 # get first two vectors from the ordination
 data_to_plot <- cbind.data.frame(v_one = simple_ordination$vectors[, 1], v_two = simple_ordination$vectors[, 2])
 
@@ -353,20 +409,24 @@ dev.new(width=40, height=30)
 
 # plot :-)
 scaling_two()
+
 ```
 
 ## Further explorations
 
 In addition to all the analyses, there are some packages that takes advantage of the Phyloseq data structure. These packages can be used to estimate richness and $\beta$-diversity:
+
  - [Breakaway](https://adw96.github.io/breakaway/index.html);
  - [DivNet](https://github.com/adw96/DivNet);
  
 or to perform differential abundance analysis:
+
   - [ANCOM-BC](https://github.com/FrederickHuangLin/ANCOMBC).
 
 In contrast, to perform PERMANOVA tests using the `vegan` function `adonis2()`, it is necessary to disassemble the Phyloseq object and use some of its parts.
 
 ```{r}
+
 ############################ LOAD LIBRARIES ############################
 
 # load libraries
@@ -376,8 +436,6 @@ library("reshape2")
 library("ggplot2")
 library("phyloseq")
 library("ANCOMBC")
-library("breakaway")
-library("DivNet")
 
 ############################ LOAD DATA ############################
 
@@ -649,5 +707,6 @@ ancom_output <- ancombc2(data=phylo_merged, assay_name="counts", tax_level="Orde
 
 ############################ ESTIMATING RICHNESS AND BETA DIVERSITY ############################
 
-# work in progress
+# work in progress, here
+
 ```
