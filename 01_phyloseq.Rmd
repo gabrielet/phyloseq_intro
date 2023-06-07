@@ -188,7 +188,7 @@ centered_counts <- decostand(as(otu_table(phylo_merged), "matrix"), method="rclr
 centered_counts_phylo <- otu_table(centered_counts, taxa_are_rows=TRUE)
 
 # build phyloseq object with CLRed counts
-centered_phylo_data <- phyloseq(centered_counts_phylo, sample_data(phylo_merged), tax_table(phylo_merged))
+centered_phylo_data <- phyloseq(centered_counts_phylo, phylo_merged_meta, tax_table(phylo_merged))
 
 ```
 
@@ -202,7 +202,7 @@ saveRDS(phylo_merged, paste0(path_to_exp, "phylo_merged.Rds"))
 # export CLR transformed object
 saveRDS(centered_phylo_data, paste0(path_to_exp, "centered_phylo_data.Rds"))
 
-# import CLR transformed
+# import a CLR transformed phyloseq object
 just_loaded_clr <- readRDS(paste0(path_to_exp, "centered_phylo_data.Rds"))
 
 ```
@@ -220,7 +220,7 @@ a_depth <- "deepsoil"
 
 # subset by depth. in phyloseq this means that samples 
 # that do not belong to a specific depth will be removed
-phylo_depth <- prune_samples(as.character(phylo_metadata$sampleID[which(phylo_metadata$Depth == a_depth)]), phylo_data)
+phylo_depth <- prune_samples(as.character(phylo_merged_meta$sampleID[which(phylo_merged_meta$Depth == a_depth)]), phylo_merged)
 
 # also, it may make sense to remove those ASVs/OTUs
 # which are always zero for the subset under consideration
@@ -263,7 +263,7 @@ plot_bar(phylo_merged, "Genus", fill="Order", facet_grid=~Depth)
 
 # or a quite not-intuitive heatmap (assuming you have thousands
 # of ASVs/OTUS, as is almost always the case)
-plot_heatmap(phylo_data)
+plot_heatmap(phylo_merged)
 
 # a phylogenetic tree is also available
 # plot_tree(phylo_merged)
@@ -395,7 +395,7 @@ partial_rda <- ordinate(phylo_merged, "RDA", formula=as.formula(formula_rda))
 # to add some environmental variables
 
 # compute fitting using vegan
-var_fitting_enviro <- envfit(partial_rda, sample_data(phylo_merged)[, c("SOM", "pH")], perm=1000, na.rm=TRUE)
+var_fitting_enviro <- envfit(partial_rda, phylo_merged_meta[, c("SOM", "pH")], perm=1000, na.rm=TRUE)
 
 # then, it will be nice to plot the ordination
 
@@ -424,6 +424,8 @@ or to perform differential abundance analysis:
   - [ANCOM-BC](https://github.com/FrederickHuangLin/ANCOMBC).
 
 In contrast, to perform PERMANOVA tests using the `vegan` function `adonis2()`, it is necessary to disassemble the Phyloseq object and use some of its parts.
+
+In the following, some code that plots some barplots and do other stuffs that may be helpful.
 
 ```{r}
 
@@ -653,15 +655,17 @@ all_plots[["ribon"]] <- control_and_warming %>%
 
 ## Work in progress
 
+Here some statistics using the permutational anova, i.e. PERMANOVA, test which is implemented, inside the `vegan` package, by a function called `adonis2()`.
+
 ```{r}
 
 ############################ PERMANOVA TEST WITH ADONIS2 ############################
 
 # as factors
-sample_data(phylo_merged)$Treatment <- factor(sample_data(phylo_merged)$Treatment, levels=unique(sample_data(phylo_merged)$Treatment))
+phylo_merged_meta$Treatment <- factor(phylo_merged_meta$Treatment, levels=unique(phylo_merged_meta$Treatment))
 
 # set levels to make Controls the reference
-sample_data(phylo_merged)$Treatment <- relevel(sample_data(phylo_merged)$Treatment, ref="C")
+phylo_merged_meta$Treatment <- relevel(phylo_merged_meta$Treatment, ref="C")
 
 # get taxa table and transpose it in to obtain a table which is
 # sample X species as described in the Adonis documentation
@@ -669,7 +673,7 @@ sample_data(phylo_merged)$Treatment <- relevel(sample_data(phylo_merged)$Treatme
 transposed_taxa <- t(otu_table(phylo_merged))
 
 # get metadata
-adonis_meta <- as.data.frame(as.matrix(sample_data(phylo_merged)))
+adonis_meta <- as.data.frame(as.matrix(phylo_merged_meta))
 
 # make sure the variables in the formula are factors since
 # statistical models require it, to work properly
@@ -693,6 +697,11 @@ adonis_meta$Site <- as.factor(adonis_meta$Site)
 # BE CAREFUL HERE, I AM NOT SURE ABOUT THIS WORKING AS I AM EXPECTING
 adonis_test <- adonis2(transposed_taxa~Treatment*Depth, data=adonis_meta, permutations=permuts, strata=adonis_meta$CollectionSite, method="bray", by="terms")
 
+```
+
+Also, this is an example of differential abundance analysis, i.e. what may be done using EdgeR or DESeq2, but using a package called ANCOM-BC.
+
+```{r}
 ############################ DIFFERENTIAL ABUNDANCE ANALYSIS ############################
 
 # set formula to conside Site as random effect
