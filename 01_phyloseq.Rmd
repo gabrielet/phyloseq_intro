@@ -49,7 +49,7 @@ library("phyloseq")
 library("vegan")
 
 # set paths to load the data
-path_to_exp <- "/mnt/cinqueg/gabriele/work/microbiology/intro_phyloseq/data/"
+path_to_exp <- "/mnt/cinqueg/gabriele/work/microbiology/other_analyses/intro_phyloseq/data/"
 
 # load tables with information that are needed
 asvs <- read.csv(paste0(path_to_exp, "asv_table.csv"), header=T, sep="\t")
@@ -444,7 +444,7 @@ library("ANCOMBC")
 print("LOADING DATA")
 
 # set path according to the experiment
-path_to_exp <- "/mnt/cinqueg/gabriele/work/microbiology/intro_phyloseq/data/"
+path_to_exp <- "/mnt/cinqueg/gabriele/work/microbiology/other_analyses/intro_phyloseq/"
 # set paths
 save_img <- paste0(path_to_exp, "figures/")
 save_taxa_figs <- paste0(save_img, "taxaFigs/")
@@ -454,9 +454,9 @@ ifelse(!dir.exists(save_img), dir.create(save_img, recursive=TRUE), "dir exists!
 ifelse(dir.exists(save_taxa_figs), "dir exists!", dir.create(save_taxa_figs, recursive=TRUE))
 
 # load asv table
-asvs <- read.csv(paste0(path_to_exp, "asv_table.csv"), header=T, sep="\t")
-metadata <- read.csv(paste0(path_to_exp, "metadata.csv"), header=T, sep="\t")
-taxonomy <- read.csv(paste0(path_to_exp, "taxonomy.csv"), header=T, sep="\t")
+asvs <- read.csv(paste0(path_to_exp, "data/asv_table.csv"), header=T, sep="\t")
+metadata <- read.csv(paste0(path_to_exp, "data/metadata.csv"), header=T, sep="\t")
+taxonomy <- read.csv(paste0(path_to_exp, "data/taxonomy.csv"), header=T, sep="\t")
 
 ############################ CREATE PHYLOSEQ OBJECTS ############################
 
@@ -653,7 +653,7 @@ all_plots[["ribon"]] <- control_and_warming %>%
 
 ```
 
-## Work in progress
+## PERMANOVA with Adonis2
 
 Here some statistics using the permutational anova, i.e. PERMANOVA, test which is implemented, inside the `vegan` package, by a function called `adonis2()`.
 
@@ -692,30 +692,151 @@ permuts <- how(nperm = 999)
 # set blocking variable, i.e. the sampling sites
 adonis_meta$Site <- as.factor(adonis_meta$Site)
 	
-# run adonis2 on bray-curtis distance using CollectionSite
+# run adonis2 on bray-curtis distance using Site
 # as blocking factor
 # BE CAREFUL HERE, I AM NOT SURE ABOUT THIS WORKING AS I AM EXPECTING
-adonis_test <- adonis2(transposed_taxa~Treatment*Depth, data=adonis_meta, permutations=permuts, strata=adonis_meta$CollectionSite, method="bray", by="terms")
+adonis_test <- adonis2(transposed_taxa~Treatment*Depth, data=adonis_meta, permutations=permuts, strata=adonis_meta$Site, method="bray", by="terms")
 
 ```
 
-Also, this is an example of differential abundance analysis, i.e. what may be done using EdgeR or DESeq2, but using a package called ANCOM-BC.
+## Differential abundance with LinDA
+
+This is an example of differential abundance analysis, i.e. what may be done using EdgeR or DESeq2, but using a package called [LinDA](https://github.com/zhouhj1994/LinDA). To use the `linda()` function you will need to install this package: [MicrobiomeStat](https://cran.r-project.org/web/packages/MicrobiomeStat/index.html).
+
+For setting proper thresholds, this is a suggested reading about [log-fold change](https://www.biostars.org/p/342756/).
 
 ```{r}
 ############################ DIFFERENTIAL ABUNDANCE ANALYSIS ############################
+# load libraries
+library("MicrobiomeStat")
+library("dplyr")
+library("ggrepel")
 
-# set formula to conside Site as random effect
-fixedf <- "Treatment * Depth"
-randf <- "Site"
+# set threshold for significance of p-adjusted. should be 0.05
+# here it's set as 0.5 just to show some taxa
+signif_t <- 0.5
+# set threshold for log-fold-change. usually it is set at 1 or 2
+# here it's set as 0.5 just to show some DA taxa
+lfc_thresh <- 0.5
+# set threshold for p-value and compute it's value in log10 scale
+# to plot a dashed line in the volcano plot
+p_thresh <- abs(log10(signif_t))
+# set threshold for abundances
+abundance_threshold <- 0.01
 
-# set seed
-set.seed(131)
+# set interesting levels
+interesting_levels <- c("Order", "Genus")
 
-# run ancombc2 using the phylo_merged
-ancom_output <- ancombc2(data=phylo_merged, assay_name="counts", tax_level="Order", fix_formula=fixedf, rand_formula=randf, p_adj_method="fdr", n_cl = 8, verbose=T)
+# storage for all results
+all_res <- list()
 
-############################ ESTIMATING RICHNESS AND BETA DIVERSITY ############################
+# set variables of interests as factor
+# first level will be the one used by ANCOMBC as a reference level for the analysis
+sample_data(phylo_merged)$Treatment <- factor(sample_data(phylo_merged)$Treatment, levels=c("C", "W"))
+# set levels to compare to
+ref_lev_treat <- "C"
+sample_data(phylo_merged)$Treatment <- relevel(sample_data(phylo_merged)$Treatment, ref_lev_treat)
+sample_data(phylo_merged)$Depth <- factor(sample_data(phylo_merged)$Depth, levels=c("topsoil", "deepsoil"))
+# set levels to compare to
+ref_lev_depth <- "topsoil"
+sample_data(phylo_merged)$Depth <- relevel(sample_data(phylo_merged)$Depth, ref_lev_depth)
+sample_data(phylo_merged)$Site <- factor(sample_data(phylo_merged)$Site, levels=unique(sample_data(phylo_merged)$Site))
 
-# nothing here, yet
-
+# loop through different taxa levels
+for (taxa_level in interesting_levels) {
+  
+  print(paste("treat by time at ", taxa_level))
+  
+  # agglomerate phylo
+  if (taxa_level=="ASV") {
+    # leave the table as is
+    phylo_agg <- phylo_merged
+  } else {
+    # else aggregate
+    phylo_agg <- tax_glom(phylo_merged, taxrank=taxa_level)
+  }
+  
+  # compute abundances
+  phylo_abundances <- otu_table(transform_sample_counts(phylo_agg, function(x) x / sum(x)))
+  # threshold for DA analysis. this will return taxa above the abundance threshold
+  above_thres_taxa <- rownames(phylo_abundances[rowSums(phylo_abundances)>=abundance_threshold, ]) ; updown <- "above"
+  # threshold for DA analysis. this will return taxa above the abundance threshold
+  #above_thres_taxa <- rownames(phylo_abundances[rowSums(phylo_abundances)<=abundance_threshold, ]) ; updown <- "below"
+  
+  # if thresholding use this
+  #otu_data <- as(otu_table(phylo_agg), "matrix")[above_thres_taxa, ]
+  
+  # if not thresholding use this
+  otu_data <- as(otu_table(phylo_agg), "matrix")
+  
+  # get metadata
+  metadata <- as(sample_data(phylo_agg), "data.frame")
+  
+  # set seed
+  set.seed(131)
+  
+  # run linda
+  linda_outs <- linda(otu_data, metadata, formula = '~Treatment+Depth+(1|Site)', alpha=signif_t, prev.filter=0.06, n.cores=4) ; withint <- ""
+  
+  # show the available tables generated by linda
+  # print(names(linda_outs$output))
+  
+  # get results from all the tables in linda_out
+  for (which_tab in names(linda_outs$output)) {
+    
+    # get table
+    volcano_data <- linda_outs$output[[which_tab]]
+    
+    # create label describing Depth, and taxa level
+    lbl <- paste0(updown, "_", abundance_threshold, "_", ref_lev_depth, "_", ref_lev_treat, "_", taxa_level, "_test_", which_tab)
+    
+    # store results
+    all_res[[lbl]] <- linda_outs
+    
+    # get taxa names for plotting purposes
+    if (taxa_level=="ASV") {
+      # if taxa_level is set at ASV level, get Genus level names
+      volcano_data$taxa <-  as(tax_table(phylo_agg)[which(rownames(tax_table(phylo_agg)) %in% rownames(volcano_data)), "Genus"], "character")
+    } else {
+      # get taxa names at correct taxa level
+      volcano_data$taxa <-  as(tax_table(phylo_agg)[which(rownames(tax_table(phylo_agg)) %in% rownames(volcano_data)), taxa_level], "character")
+    }
+    
+    # if any result is available, plot
+    if (any(volcano_data$reject==T)) {
+        
+      # apply threshold on p-values and log-fold change
+      volcano_data <- volcano_data %>% mutate(threshold = ifelse(log2FoldChange >= lfc_thresh & padj <= signif_t,"up", ifelse(log2FoldChange <= -lfc_thresh  & padj <= signif_t, "down", "other")))
+      volcano_data <- volcano_data %>% mutate(dsize=ifelse(log2FoldChange >= lfc_thresh & padj <= signif_t, 4, ifelse(log2FoldChange <= -lfc_thresh  & padj <= signif_t, 4, 2.5)))
+      # compute log of padj
+      volcano_data$log_p <- abs(log10(volcano_data$padj))
+      
+      # unlabel non significant taxa, if any was found
+      if (any(volcano_data$threshold=="other") | length(grep("Unidentified", volcano_data$taxa))>0) {
+        volcano_data$taxa[which(volcano_data$threshold=="other")] <- ""
+        volcano_data$taxa[grep("Unidentified", volcano_data$taxa)] <- ""
+      }
+      
+      # plot
+      volcano <- ggplot(volcano_data, aes(x=log2FoldChange, y=log_p, label=taxa)) +
+        geom_point(aes(fill=threshold), shape=21, colour="black", size=volcano_data$dsize) +
+        scale_fill_manual(values = c("up"="firebrick1", "down"="steelblue1",  "other"= "gray50")) +
+        geom_hline(yintercept=p_thresh, linetype="dashed", color = "gray30", linewidth=1) +
+        geom_text_repel(nudge_x=-0.2, nudge_y=0.05, max.overlaps=20) +
+        ylab("-log10(p-value)") +
+        xlab("log2FoldChange") +
+        theme_bw() +
+        theme(text=element_text(size=25, face="bold"), legend.position="none", strip.text=element_text(size=15), legend.key.height=unit(0.7,'cm'))
+      
+      # plot
+      plot(volcano)
+      
+    } else {
+      print("nothing significant!")
+    }
+  }
+}
 ```
+In this plot, the dashed line represents the p-value threshold, in log10-scale.
+
+There are many other ways of computing differentially abundant taxa such as [ANCOM-BC](https://github.com/FrederickHuangLin/ANCOMBC) and others, see [this](https://doi.org/10.1093/bib/bbac607) paper and [this](https://doi.org/10.1186/s40168-022-01320-0) paper for some inspiration.
